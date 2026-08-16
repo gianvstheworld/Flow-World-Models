@@ -1,0 +1,32 @@
+# Unattended overnight run on a single RTX 3060 (12 GB).
+#
+# Sizing (all from measurement, not estimate):
+#   0.783 s/step x 480 steps       = 6.26 min/epoch
+#   20-clip val_mini eval          = 3.6 min, fires every checkpoint_every epochs
+#   70 epochs + 7 evals            ~= 7.7 h
+#   final full 240-clip evaluation ~= 0.7 h
+#   total                          ~= 8.4 h
+#
+# batch_size_per_gpu stays at 1: batch 4 OOMs outright, and batch 2 leaves only ~500 MiB
+# free -- too tight to survive an unattended night once the 50-step ODE sampler runs.
+# Batch 1 is the configuration already proven over 2 full epochs plus two eval passes
+# at 6.9 GB of 12 GB. lr stays at the base 1e-3 for the same reason: do not change two
+# unproven things at once in a run nobody is watching.
+#
+# epochs: 70 (not 180) so the CosineAnnealingLR schedule -- T_max = epochs - warmup_epochs
+# (main.py:341) -- completes inside the budget. A finished 70-epoch schedule is a better
+# artifact than a 180-epoch run killed at hour 9 with the LR still high mid-decay.
+#
+# NOTE: ~480 training clips is ~1% of the paper's data. This will overfit. The result is
+# evidence the pipeline runs end to end, not a paper-comparable number.
+inherits:
+- local_smoke.yaml
+
+trainer:
+  checkpoint_every: 10             # also drives eval_every (base: eval_every = checkpoint_every)
+  n_predictions_for_evaluation: 1  # base is 3; each prediction is ~10.8 s of ODE sampling
+  training:
+    epochs: 70
+    batch_size_per_gpu: 1
+  evaluation:
+    do_final_full_evaluation: true # one real 240-clip validation number at the end

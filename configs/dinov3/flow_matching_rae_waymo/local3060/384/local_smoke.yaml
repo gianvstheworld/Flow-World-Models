@@ -1,0 +1,32 @@
+# Smoke-test config: FlowWM on a 1-GPU RTX 3060 (12 GB), using the 8 training /
+# 4 validation Waymo shards converted into ~/datasets/waymococo_f0.
+#
+# Purpose is to confirm the training loop runs and the loss falls, and to measure
+# seconds-per-step. NOT a reproduction: 480 clips is ~1% of the paper's training
+# data, so the model will overfit long before it generalises.
+inherits:
+- ../../base/384/dinov3_waymo_512_vits_16_384_flow_matching_rae_base.yaml
+
+datasets:
+  train:
+    waymo:
+      root: /home/davi/datasets/waymococo_f0/training_video_tensors
+      path_annotations: /home/davi/datasets/waymococo_f0/annotations/instances_train2020.json
+  val:
+    waymo:
+      root: /home/davi/datasets/waymococo_f0/validation_video_tensors
+      path_annotations: /home/davi/datasets/waymococo_f0/annotations/instances_val2020.json
+  val_mini:
+    waymo:
+      root: /home/davi/datasets/waymococo_f0/validation_video_tensors
+      path_annotations: /home/davi/datasets/waymococo_f0/annotations/instances_val2020.json
+
+trainer:
+  # fp16 autocast + GradScaler (trainer.py:123); base config leaves this false.
+  use_mixed_precision: true
+  checkpoint_every: 2
+  training:
+    epochs: 4
+
+evaluation_detection:
+  val_img_path: /home/davi/datasets/waymococo_f0/val2020

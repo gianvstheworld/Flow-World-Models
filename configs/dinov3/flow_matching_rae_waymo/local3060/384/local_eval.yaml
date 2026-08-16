@@ -1,0 +1,22 @@
+# Eval-only config: loads the epoch_0002 checkpoint produced by local_smoke.yaml and
+# runs evaluation on an 8-clip val_mini subset. No training, no train dataset built.
+#
+# Sized to finish in minutes rather than hours: a full eval is 240 clips x 3 predictions
+# x ~9.9 s of ODE sampling (~2 h). The val_mini split subsets itself -- WaymoVideoDataset
+# ._build_minival_clip_and_img_indexes() keeps the first subclip of each
+# (parent_video_id, camera_name), i.e. 4 segments x 5 cameras = 20 clips -- so val_mini
+# keeps the normal validation root and no separate directory is needed.
+# 20 clips x 1 prediction x ~9.9 s ~= 3.5 min of sampling.
+#
+# Detection metrics (AP_L) will be empty: they need a detectron2/detrex checkpoint that
+# is not part of the open-source release. evaluators/evaluator.py was patched locally so
+# the missing detector yields empty predictions instead of a KeyError.
+inherits:
+- local_smoke.yaml
+
+eval_only: true
+eval_only_use_mini: true
+
+trainer:
+  checkpoint_path: /home/davi/Documents/Flow-World-Models/experiments/dinov3/flow_matching_rae_waymo/local3060/384/local_smoke/checkpoints/epoch_0002.pt
+  n_predictions_for_evaluation: 1
