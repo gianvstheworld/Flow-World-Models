@@ -35,6 +35,12 @@ trainer:
   training:
     epochs: 4
     mixed_precision_dtype: bfloat16
+  evaluation:
+    # Skip re-sampling training clips at every evaluation. It costs a full 50-step ODE
+    # pass per clip -- at the upstream default of 256 that is ~45 min per evaluation,
+    # over ten times the cost of the 20-clip validation pass it precedes, for a number
+    # that only measures memorisation of data already being trained on.
+    train_eval_n_samples: 0
 
 evaluation_detection:
   val_img_path: /home/davi/datasets/waymococo_f0/val2020

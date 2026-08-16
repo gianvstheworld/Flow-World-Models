@@ -1556,6 +1556,12 @@ class TrainerFlowMatching(Trainer):
         self.eval_planning_only = eval_cfg.get("eval_planning_only", False)
         self.planning_env = None
 
+        # Number of *training* clips to re-evaluate with full ODE sampling at each
+        # evaluation. This is as expensive per clip as validation, so it can easily
+        # dominate evaluation wall-clock. Set to 0 to skip it entirely.
+        # Default preserves the previous hardcoded behaviour.
+        self.train_eval_n_samples = int(eval_cfg.get("train_eval_n_samples", 256))
+
         # Initialize metrics storage for JSON export
         self.all_metrics = {}
         self.metrics_json_path = os.path.join(
@@ -1843,8 +1849,21 @@ class TrainerFlowMatching(Trainer):
                 self.model_fn = tracked_model.forward
 
         train_eval_metrics = None
-        if self.train_loader is not None and not self.eval_planning_only:
-            train_eval_metrics = self.run_train_set_evaluation(n_samples=256)
+        if (
+            self.train_loader is not None
+            and not self.eval_planning_only
+            and self.train_eval_n_samples > 0
+        ):
+            # Announced explicitly: this pass runs a full 50-step ODE sample per clip
+            # and otherwise produces no output until it finishes, which reads as a hang.
+            self.logger.info(
+                "[EVAL] Running train-set evaluation on %d clips "
+                "(set trainer.evaluation.train_eval_n_samples=0 to skip)",
+                self.train_eval_n_samples,
+            )
+            train_eval_metrics = self.run_train_set_evaluation(
+                n_samples=self.train_eval_n_samples
+            )
         # Setup ressources
         dump_epoch_dir = self._setup_eval_dirs(final_eval)
 
