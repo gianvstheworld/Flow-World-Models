@@ -129,6 +129,11 @@ class Trainer:
         self.enable_visualization = bool(
             cfg.trainer.get("evaluation", {}).get("enable_visualization", True)
         )
+        # Divergence guard; see _register_loss_health.
+        self._consecutive_unhealthy_steps = 0
+        self.max_consecutive_unhealthy_steps = int(
+            cfg.trainer.training.get("max_consecutive_unhealthy_steps", 25)
+        )
         self.world_size = (
             dist.get_world_size()
             if dist.is_available() and dist.is_initialized()
@@ -784,6 +789,37 @@ class Trainer:
                 kwargs.get("dataloader_batch_idx"),
                 kwargs.get("split"),
             )
+
+    def _register_loss_health(self, loss):
+        """Abort training once the loss has been non-finite for too many steps.
+
+        An isolated non-finite step can be a transient fp16 overflow, which the
+        GradScaler already handles by skipping the optimizer step. A sustained run
+        of them means the weights themselves are NaN: the loss can never recover,
+        every subsequent epoch is wasted compute, and periodic checkpointing will
+        overwrite the last healthy weights with unusable ones. Fail loudly instead.
+
+        Note for multi-GPU: DDP synchronises gradients, so ranks diverge together
+        and raise on the same step in practice. This is not an all-reduced decision.
+        """
+        if self._check_loss_health(loss):
+            self._consecutive_unhealthy_steps = 0
+            return
+
+        self._consecutive_unhealthy_steps += 1
+        if self._consecutive_unhealthy_steps < self.max_consecutive_unhealthy_steps:
+            return
+
+        raise RuntimeError(
+            f"Training loss was non-finite for "
+            f"{self._consecutive_unhealthy_steps} consecutive steps "
+            f"(last value: {loss}). The model has diverged; aborting rather than "
+            f"training on and overwriting healthy checkpoints. If mixed precision "
+            f"is enabled, verify trainer.training.mixed_precision_dtype is "
+            f"'bfloat16' -- it defaults to 'float16', which overflows at the base "
+            f"learning rate. Raise trainer.training."
+            f"max_consecutive_unhealthy_steps to tolerate more."
+        )
 
     def _check_loss_health(self, loss) -> bool:
         """
@@ -1671,6 +1707,10 @@ class TrainerFlowMatching(Trainer):
             )
             loss_dict.update({f"detector_{k}": v for k, v in detector_losses.items()})
             loss_dict["detector_loss_total"] = detector_loss_total
+
+        # Gate on the combined loss rather than the individual terms above: it is the
+        # value actually backpropagated, so it catches divergence from any source.
+        self._register_loss_health(loss_total)
 
         self.scaler.scale(loss_total).backward()
 
