@@ -22,11 +22,19 @@ datasets:
       path_annotations: /home/davi/datasets/waymococo_f0/annotations/instances_val2020.json
 
 trainer:
-  # fp16 autocast + GradScaler (trainer.py:123); base config leaves this false.
+  # Mixed-precision autocast; base config leaves this false.
+  #
+  # mixed_precision_dtype MUST be set explicitly. trainer.py:119-121 defaults it to
+  # "float16", whose exponent range overflows at the base lr of 1e-3: gradient norms
+  # hit inf early and the model reaches an unrecoverable NaN once the LR warmup
+  # completes and the peak LR is applied. bfloat16 has fp32's exponent range, so the
+  # overflow cannot occur, and it disables the GradScaler automatically
+  # (trainer.py:122-126). Supported by trainer/utils.py:50-55.
   use_mixed_precision: true
   checkpoint_every: 2
   training:
     epochs: 4
+    mixed_precision_dtype: bfloat16
 
 evaluation_detection:
   val_img_path: /home/davi/datasets/waymococo_f0/val2020
