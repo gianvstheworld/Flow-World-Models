@@ -444,8 +444,10 @@ class DeterministicPredictorEvaluatorWaymo(BaseEvaluator):
         self.list_coco_predictions_oracle = []
 
     def accumulate(self, batch, model_outputs, downstream_outputs):
-        coco_predictions = downstream_outputs["coco_predictions"]
-        oracle_predictions = downstream_outputs["coco_predictions_oracle"]
+        # Detection outputs are absent when no detector is loaded (detectron2/detrex
+        # not installed). Match the defensive access already used for the oracle list.
+        coco_predictions = downstream_outputs.get("coco_predictions", [])
+        oracle_predictions = downstream_outputs.get("coco_predictions_oracle", [])
 
         self.list_coco_predictions.extend(coco_predictions)
         self.list_coco_predictions_oracle.extend(oracle_predictions)
@@ -902,7 +904,9 @@ class FlowMatchingEvaluatorWaymoFastV2(object):
 
     def accumulate(self, batch, model_outputs, downstream_outputs):
         """Accumulate predictions from a batch."""
-        coco_predictions = downstream_outputs["coco_predictions"]
+        # Detection outputs are absent when no detector is loaded (detectron2/detrex
+        # not installed). Match the defensive access already used for the oracle list.
+        coco_predictions = downstream_outputs.get("coco_predictions", [])
         oracle_predictions = downstream_outputs.get("coco_predictions_oracle", [])
 
         self.list_coco_predictions.extend(coco_predictions)
