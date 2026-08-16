@@ -125,6 +125,10 @@ class Trainer:
             enabled=self.use_mixed_precision and self.autocast_dtype == torch.float16,
         )
         self.logger = logging.getLogger(__name__)
+        # Visualisation dumping is best-effort; see _save_visualisations.
+        self.enable_visualization = bool(
+            cfg.trainer.get("evaluation", {}).get("enable_visualization", True)
+        )
         self.world_size = (
             dist.get_world_size()
             if dist.is_available() and dist.is_initialized()
@@ -762,6 +766,25 @@ class Trainer:
                 serializable[k] = str(v)
         return serializable
 
+    def _save_visualisations(self, **kwargs):
+        """Dump evaluation visualisations. Best-effort by design.
+
+        Visualisation is a reporting side effect, not part of training or
+        evaluation. A failure inside it -- e.g. PCA rejecting non-finite predicted
+        latents -- must not terminate an otherwise running job, so it is logged and
+        swallowed. Set trainer.evaluation.enable_visualization=false to skip entirely.
+        """
+        if not self.enable_visualization:
+            return
+        try:
+            save_batch_and_model_outputs(**kwargs)
+        except Exception:
+            self.logger.exception(
+                "Visualisation failed (batch %s, split %s); continuing without it.",
+                kwargs.get("dataloader_batch_idx"),
+                kwargs.get("split"),
+            )
+
     def _check_loss_health(self, loss) -> bool:
         """
         Check if loss is finite and non-NaN
@@ -1032,7 +1055,7 @@ class TrainerHeatmap(Trainer):
                 self.global_rank == 0
                 and dataloader_batch_idx <= num_batches_to_save_for_visu
             ):
-                save_batch_and_model_outputs(
+                self._save_visualisations(
                     batch=batch,
                     dataloader_batch_idx=dataloader_batch_idx,
                     model_outputs=model_outputs,
@@ -1334,7 +1357,7 @@ class TrainerDeterministic(Trainer):
                 self.global_rank == 0
                 and dataloader_batch_idx < num_batches_to_save_for_visu
             ):
-                save_batch_and_model_outputs(
+                self._save_visualisations(
                     batch=batch,
                     model_outputs=model_outputs,
                     gpu_rank=self.global_rank,
@@ -2037,7 +2060,7 @@ class TrainerFlowMatching(Trainer):
                         self.global_rank == 0
                         and dataloader_batch_idx < num_batches_to_save_for_visu
                     ):
-                        save_batch_and_model_outputs(
+                        self._save_visualisations(
                             batch=batch,
                             model_outputs=model_outputs,
                             gpu_rank=self.global_rank,
