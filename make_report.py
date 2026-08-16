@@ -26,6 +26,15 @@ def sh(cmd):
         return f"(failed: {exc})"
 
 
+def is_finite(value_str):
+    """True if a logged loss string is a real number (not nan/inf/unparseable)."""
+    try:
+        value = float(value_str)
+    except (TypeError, ValueError):
+        return False
+    return value == value and abs(value) != float("inf")  # value != value <=> NaN
+
+
 def main():
     exp_dir = Path(sys.argv[1])
     wrapper_log = Path(sys.argv[2])
@@ -37,11 +46,16 @@ def main():
     wrapper = wrapper_log.read_text(errors="replace") if wrapper_log.exists() else ""
 
     # --- training curve -------------------------------------------------
+    # loss_total is matched as \S+ rather than [\d.]+ so that a diverged epoch
+    # (loss_total=nan / inf) is still captured. Matching only digits silently drops
+    # those epochs from the report and makes a diverged run look like a short one.
     epoch_re = re.compile(
-        r"\[TRAIN\] EPOCH (\d+) SUMMARY \| loss_total=([\d.]+) \| lr=([\d.e+-]+) \| "
+        r"\[TRAIN\] EPOCH (\d+) SUMMARY \| loss_total=(\S+) \| lr=([\d.e+-]+) \| "
         r"avg time per gradient step=([\d.]+)s \| steps=(\d+) \| duration=([\d.]+)s"
     )
     epochs = epoch_re.findall(log)
+    diverged = [e for e in epochs if not is_finite(e[1])]
+    healthy = [e for e in epochs if is_finite(e[1])]
 
     # --- errors ---------------------------------------------------------
     tracebacks = re.findall(r"(?:\[rank0\]: )?Traceback \(most recent call last\)", wrapper)
@@ -68,8 +82,9 @@ def main():
     canvases = list((exp_dir / "dumps").rglob("canvas_*.png")) if (exp_dir / "dumps").exists() else []
 
     # "Completed" requires a clean exit *and* at least one finished epoch -- a zero exit
-    # with no epoch summaries means it died before doing any real work.
-    ok = exit_code == "0" and not tracebacks and bool(epochs)
+    # with no epoch summaries means it died before doing any real work. A run that
+    # produced a non-finite loss has diverged and is never a success, whatever it exited with.
+    ok = exit_code == "0" and not tracebacks and bool(epochs) and not diverged
 
     L = []
     A = L.append
@@ -81,7 +96,20 @@ def main():
     # ---- headline ------------------------------------------------------
     A("## Bottom line")
     A("")
-    if ok and epochs:
+    if diverged:
+        first_bad = diverged[0]
+        A(f"- 🔴 **The run DIVERGED at epoch {first_bad[0]}** "
+          f"(loss_total={first_bad[1]}, lr={first_bad[2]}).")
+        A(f"- {len(diverged)} of {len(epochs)} epochs produced a non-finite loss.")
+        if healthy:
+            A(f"- Last healthy epoch: **{healthy[-1][0]}** (loss {healthy[-1][1]}). "
+              "Checkpoints saved *after* that epoch contain non-finite weights "
+              "and must be discarded.")
+        else:
+            A("- **No epoch produced a finite loss.** Every checkpoint is unusable.")
+        A("- Training does not stop on a non-finite loss, so epochs after divergence "
+          "are wasted compute, not results.")
+    elif ok and epochs:
         first, last = epochs[0], epochs[-1]
         A(f"- Training **completed**: {len(epochs)} epoch summaries logged, "
           f"last was epoch {last[0]}.")
@@ -96,10 +124,11 @@ def main():
     else:
         A("- Run **failed before completing an epoch**. See **Errors** below.")
     A("")
-    A("> Reminder: this is a ~480-clip run, roughly 1% of the paper's training data. "
-      "The loss value is evidence the machinery works, **not** a result comparable to "
-      "the paper. Expect overfitting.")
-    A("")
+    if epochs:
+        A(f"> Scale check: {epochs[-1][4]} gradient steps per epoch. Compare against the "
+          "paper's 52K steps at an effective batch of 128 before reading anything into "
+          "the loss value.")
+        A("")
 
     # ---- training curve ------------------------------------------------
     A("## Training curve")
@@ -108,7 +137,8 @@ def main():
         A("| epoch | loss_total | lr | s/step | duration |")
         A("|---:|---:|---:|---:|---:|")
         for e in epochs:
-            A(f"| {e[0]} | {e[1]} | {e[2]} | {e[3]} | {float(e[5])/60:.1f} min |")
+            flag = "" if is_finite(e[1]) else "  🔴"
+            A(f"| {e[0]} | {e[1]}{flag} | {e[2]} | {e[3]} | {float(e[5])/60:.1f} min |")
     else:
         A("_No epoch summaries found in the log._")
     A("")
